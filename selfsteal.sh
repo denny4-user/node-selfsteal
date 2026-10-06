@@ -173,12 +173,91 @@ https://$DOMAIN {
 }
 EOF
 
-# нейтральная страница, у каждой ноды своя (чтобы не было одинакового отпечатка)
-# пересоздаётся при смене домена; токен постоянный, чтобы страница ноды не менялась от запуска к запуску
+# страница-заглушка: у каждой ноды визуально отличается (цвет, текст, компоновка)
+# токен — seed для выбора варианта; постоянный, чтобы страница не менялась от запуска к запуску
+# пересоздаётся при смене домена
 if [ ! -f "$DIR/html/index.html" ] || ! grep -qF "<title>$DOMAIN</title>" "$DIR/html/index.html"; then
 	[ -s "$DIR/token" ] || head -c 6 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$DIR/token"
 	TOKEN="$(cat "$DIR/token")"
 	YEAR="$(date +%Y)"
+
+	# seed из первых 8 hex-символов токена; pick хеширует seed+slot для выбора
+	SEED=$((16#${TOKEN:0:8}))
+	pick() {
+		local s=$1; shift
+		local h=$(( (SEED ^ (s * 2654435)) & 0x7FFFFFFF ))
+		h=$(( (h ^ (h >> 13)) & 0x7FFFFFFF ))
+		h=$(( (h * 1597334677) & 0x7FFFFFFF ))
+		h=$(( (h ^ (h >> 7)) & 0x7FFFFFFF ))
+		local i=$(( h % $# ))
+		shift "$i"; echo "$1"
+	}
+
+	# ---------- палитры (slot разный → выбор независимый) ----------
+	BG="$(   pick 1  '#f5f7fa' '#fafafa' '#f0f4f8' '#fefefe' '#f7f7f7' '#f4f6f9' '#f9fafb' '#f5f5f5')"
+	FG="$(   pick 3  '#1f2933' '#2d3748' '#1a202c' '#333333' '#24292f' '#1b1f23' '#374151' '#27272a')"
+	SUB="$(  pick 7  '#52606d' '#718096' '#4a5568' '#666666' '#57606a' '#586069' '#6b7280' '#71717a')"
+	FOOT="$( pick 11 '#9aa5b1' '#a0aec0' '#a0aab4' '#999999' '#8b949e' '#959da5' '#9ca3af' '#a1a1aa')"
+	ACC="$(  pick 13 '#3182ce' '#2b6cb0' '#0969da' '#0366d6' '#2563eb' '#1d4ed8' '#0284c7' '#0891b2')"
+
+	# ---------- шрифт ----------
+	FONT="$(pick 17 \
+		'system-ui,-apple-system,Segoe UI,Roboto,sans-serif' \
+		'Inter,system-ui,sans-serif' \
+		'-apple-system,BlinkMacSystemFont,Helvetica Neue,sans-serif' \
+		'Segoe UI,Tahoma,Geneva,Verdana,sans-serif' \
+		'Roboto,Helvetica,Arial,sans-serif' \
+		'San Francisco,Helvetica Neue,Arial,sans-serif')"
+
+	# ---------- компоновка ----------
+	MSTYLE="$(pick 19 \
+		'max-width:640px;margin:15vh auto;padding:0 24px' \
+		'max-width:560px;margin:18vh auto;padding:0 32px' \
+		'max-width:720px;margin:12vh auto;padding:0 20px' \
+		'max-width:600px;margin:16vh auto;padding:0 28px')"
+	H1SIZE=$(( 24 + (SEED ^ 7723) % 8 ))
+
+	# ---------- заголовок ----------
+	H1="$(pick 29 \
+		'Static content delivery' \
+		'Edge node' \
+		'Content distribution endpoint' \
+		'Asset delivery service' \
+		'Media cache node' \
+		'Resource delivery point' \
+		'Distribution endpoint' \
+		'Static assets host')"
+
+	# ---------- описание ----------
+	DESC="$(pick 31 \
+		'This host serves static assets for internal applications. There is nothing to browse here.' \
+		'This endpoint distributes cached resources for upstream services. No public content is available.' \
+		'An edge node providing accelerated delivery of static files. Not intended for direct access.' \
+		'This server handles content distribution for connected applications. Direct browsing is not supported.' \
+		'Static file delivery node. This address does not host any user-facing content.' \
+		'Part of a content delivery network serving application assets. No pages to display.' \
+		'This node caches and serves media for backend services. Nothing here for visitors.' \
+		'Serving static resources for platform infrastructure. No browsable content is available.')"
+
+	# ---------- нижняя строка ----------
+	FOOT_N=$(( (SEED ^ 9371) % 4 ))
+	case $FOOT_N in
+		0) FOOTTEXT="&copy; $YEAR $DOMAIN" ;;
+		1) FOOTTEXT="$DOMAIN &middot; $YEAR" ;;
+		2) FOOTTEXT="$YEAR &mdash; $DOMAIN" ;;
+		3) FOOTTEXT="$DOMAIN" ;;
+	esac
+
+	# ---------- дополнительный элемент ----------
+	EXTRA_N=$(( (SEED ^ 4127) % 5 ))
+	case $EXTRA_N in
+		0) EXTRA='' EXTRACSS='' ;;
+		1) EXTRA="<hr>" EXTRACSS="hr{border:none;border-top:1px solid ${FOOT};margin:32px 0 0}" ;;
+		2) EXTRA="<p class=s>Status: operational</p>" EXTRACSS=".s{font-size:13px;color:${ACC};margin-top:24px}" ;;
+		3) EXTRA="<div class=d></div>" EXTRACSS=".d{width:40px;height:3px;background:${ACC};margin-top:24px;border-radius:2px}" ;;
+		4) EXTRA="<p class=s>Node active</p>" EXTRACSS=".s{font-size:12px;text-transform:uppercase;letter-spacing:1px;color:${FOOT};margin-top:28px}" ;;
+	esac
+
 	cat > "$DIR/html/index.html" <<EOF
 <!doctype html>
 <html lang="en">
@@ -188,18 +267,20 @@ if [ ! -f "$DIR/html/index.html" ] || ! grep -qF "<title>$DOMAIN</title>" "$DIR/
 <meta name="build" content="$TOKEN">
 <title>$DOMAIN</title>
 <style>
-body{margin:0;font:16px/1.6 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#1f2933;background:#f5f7fa}
-main{max-width:640px;margin:15vh auto;padding:0 24px}
-h1{font-size:28px;margin:0 0 8px}
-p{color:#52606d}
-footer{margin-top:48px;font-size:13px;color:#9aa5b1}
+body{margin:0;font:16px/1.6 ${FONT};color:${FG};background:${BG}}
+main{${MSTYLE}}
+h1{font-size:${H1SIZE}px;margin:0 0 8px}
+p{color:${SUB}}
+footer{margin-top:48px;font-size:13px;color:${FOOT}}
+${EXTRACSS}
 </style>
 </head>
 <body>
 <main>
-<h1>Static content delivery</h1>
-<p>This host serves static assets for internal applications. There is nothing to browse here.</p>
-<footer>&copy; $YEAR $DOMAIN</footer>
+<h1>${H1}</h1>
+<p>${DESC}</p>
+${EXTRA}
+<footer>${FOOTTEXT}</footer>
 </main>
 </body>
 </html>
