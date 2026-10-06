@@ -84,16 +84,19 @@ if printf '%s' "$DOMAIN" | grep -Eq 'vpn|proxy|node|xray|vless|reality|tunnel|ma
 fi
 
 # 1. DNS: домен должен указывать на эту машину, иначе Let's Encrypt не выдаст сертификат
+# все IPv4 этой машины: адреса на интерфейсах (дополнительные IP у хостера) + внешний адрес выхода (на случай NAT)
 MYIP="$(curl -4 -fsS --max-time 8 https://api.ipify.org 2>/dev/null || curl -4 -fsS --max-time 8 https://ifconfig.me 2>/dev/null || true)"
-[ -n "$MYIP" ] || die "не удалось узнать внешний IPv4 этой машины"
+LOCALIPS="$( { ip -4 -o addr show 2>/dev/null | awk '{print $4}' | cut -d/ -f1; echo "$MYIP"; } | grep -vE '^(127\.|$)' | sort -u)"
+[ -n "$LOCALIPS" ] || die "не удалось узнать IPv4 этой машины"
 if [ "$SKIP_DNS" -eq 0 ]; then
 	DNSIPS="$(curl -fsS --max-time 8 -H 'accept: application/dns-json' "https://1.1.1.1/dns-query?name=$DOMAIN&type=A" 2>/dev/null \
 		| grep -oE '"data":"[0-9.]+"' | cut -d'"' -f4 || true)"
 	[ -n "$DNSIPS" ] || DNSIPS="$(getent ahostsv4 "$DOMAIN" | awk '{print $1}' | sort -u || true)"
-	[ -n "$DNSIPS" ] || die "у $DOMAIN нет A-записи. Добавьте A $DOMAIN → $MYIP (в Cloudflare — без проксирования, серое облако)"
-	printf '%s\n' "$DNSIPS" | grep -qx "$MYIP" \
-		|| die "$DOMAIN указывает на ${DNSIPS//$'\n'/ }, а эта машина $MYIP. Поправьте A-запись (или --skip-dns-check)"
-	c_ok "DNS: $DOMAIN → $MYIP"
+	[ -n "$DNSIPS" ] || die "у $DOMAIN нет A-записи. Добавьте A $DOMAIN → IP этой ноды (в Cloudflare — без проксирования, серое облако)"
+	MATCH="$(printf '%s\n' "$DNSIPS" | grep -xF -f <(printf '%s\n' "$LOCALIPS") | head -1 || true)"
+	[ -n "$MATCH" ] \
+		|| die "$DOMAIN указывает на ${DNSIPS//$'\n'/ }, а у этой машины ${LOCALIPS//$'\n'/ }. Поправьте A-запись (или --skip-dns-check)"
+	c_ok "DNS: $DOMAIN → $MATCH (адрес этой машины)"
 fi
 
 # 2. порты: 80 нужен для выпуска сертификата, $PORT — для сайта на localhost
