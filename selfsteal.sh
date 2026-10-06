@@ -171,8 +171,10 @@ https://$DOMAIN {
 EOF
 
 # нейтральная страница, у каждой ноды своя (чтобы не было одинакового отпечатка)
-if [ ! -f "$DIR/html/index.html" ]; then
-	TOKEN="$(head -c 6 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+# пересоздаётся при смене домена; токен постоянный, чтобы страница ноды не менялась от запуска к запуску
+if [ ! -f "$DIR/html/index.html" ] || ! grep -qF "<title>$DOMAIN</title>" "$DIR/html/index.html"; then
+	[ -s "$DIR/token" ] || head -c 6 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$DIR/token"
+	TOKEN="$(cat "$DIR/token")"
 	YEAR="$(date +%Y)"
 	cat > "$DIR/html/index.html" <<EOF
 <!doctype html>
